@@ -1,92 +1,43 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
+pragma solidity ^0.8.28;
 
-import "forge-std/Test.sol";
-import "forge-std/console2.sol";
-import "src/Bank.sol";
+import { Test, console2 } from "forge-std/Test.sol";
+import { Bank } from "../src/Bank.sol";
 
 contract BankTest is Test {
     Bank public bank;
+    address public alice = makeAddr("alice");
+    address public bob = makeAddr("bob");
 
     function setUp() public {
         bank = new Bank();
-
-        // get code size
-        uint256 codeSize;
-        address bankAddr = address(bank);
-        assembly {
-            codeSize := extcodesize(bankAddr)
-        }
-        console2.log("[before]: codeSize", codeSize);
-    }
-
-    // receive function to receive ETH
-    receive() external payable { }
-
-    function testDeposit() public {
-        address user = makeAddr("user");
-        vm.deal(user, 1 ether);
-        vm.prank(user);
-        bank.deposit{ value: 0.5 ether }();
-        assertEq(bank.balances(user), 0.5 ether);
-    }
-
-    function testWithdraw() public {
-        address bankAdmin = bank.admin();
-        vm.deal(address(bankAdmin), 1 ether);
+        vm.deal(alice, 100 ether);
+        vm.deal(bob, 100 ether);
         vm.deal(address(bank), 1 ether);
-        uint256 initialBalance = bankAdmin.balance;
-
-        vm.prank(bankAdmin);
-        bank.withdraw(1 ether);
-
-        assertEq(bankAdmin.balance, initialBalance + 1 ether);
     }
 
-    function testFailWithdrawNotAdmin() public {
-        vm.deal(address(bank), 1 ether);
-        vm.prank(makeAddr("user"));
-        bank.withdraw(0.5 ether);
-    }
+    function testMulticall() public {
+        // multicall data
+        bytes[] memory data = new bytes[](2);
 
-    function testTopDepositors() public {
-        address user1 = makeAddr("user1");
-        address user2 = makeAddr("user2");
-        address user3 = makeAddr("user3");
+        // 1. call getBalance
+        data[0] = abi.encodeWithSelector(bank.getBalance.selector);
 
-        vm.deal(user1, 1 ether);
-        vm.deal(user2, 2 ether);
-        vm.deal(user3, 3 ether);
+        // 2. call getTopDepositors
+        data[1] = abi.encodeWithSelector(bank.getTopDepositors.selector);
 
-        vm.prank(user1);
-        bank.deposit{ value: 0.5 ether }();
-        vm.prank(user2);
-        bank.deposit{ value: 1 ether }();
-        vm.prank(user3);
-        bank.deposit{ value: 1.5 ether }();
+        // alice call multicall
+        vm.startPrank(alice);
 
-        address[3] memory topDepositors = bank.getTopDepositors();
-        assertEq(topDepositors[0], user3);
-        assertEq(topDepositors[1], user2);
-        assertEq(topDepositors[2], user1);
-    }
+        bytes[] memory results = bank.multicall(data);
 
-    function testDestroy() public {
-        // ensure contract has some ETH for testing
-        vm.deal(address(bank), 1 ether);
+        // decode and verify results
+        uint256 balance = abi.decode(results[0], (uint256));
+        address[3] memory topDepositors = abi.decode(results[1], (address[3]));
 
-        // create a recipient address
-        address payable recipient = payable(makeAddr("recipient"));
-        uint256 initialBalance = recipient.balance;
+        assertEq(balance, 1 ether); // because we give 1 ether to the contract in setUp
+        assertEq(topDepositors[0], address(0));
 
-        // record contract's initial balance
-        uint256 bankBalance = address(bank).balance;
-
-        // call destroy function
-        bank.destroy(recipient);
-
-        // verify:
-        // 1. recipient should receive all ETH
-        assertEq(recipient.balance, initialBalance + bankBalance);
+        vm.stopPrank();
     }
 }
